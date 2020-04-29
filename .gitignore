@@ -111,3 +111,7 @@ demo/pics/*
 # Exceptions for notebooks/
 !notebooks/*.ipynb
 !notebooks/adaptive_defence_evaluations/*.ipynb
+
+
+.vscode
+jexp.log
