@@ -3,7 +3,7 @@ from dev.transforms import Preprocessor
 
 class RawAudioCNN(nn.Module):
     """Adaption of AudioNet (arXiv:1807.03418)."""
-    def __init__(self):
+    def __init__(self, num_class):
         super().__init__()
         self.prep = Preprocessor()
 
@@ -67,7 +67,7 @@ class RawAudioCNN(nn.Module):
         )
 
         # 32 x 30
-        self.fc = nn.Linear(32, 10)
+        self.fc = nn.Linear(32, num_class)
 
     def forward(self, x):
         """

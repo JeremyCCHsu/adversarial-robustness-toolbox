@@ -58,7 +58,7 @@ def main(args):
     device = _get_device()
     logging.info(device)
 
-    model = RawAudioCNN()
+    model = RawAudioCNN(num_class=10)
     if _is_cuda_available():
         model.to(device)
 
