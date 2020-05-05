@@ -76,7 +76,11 @@ class RawAudioCNN(nn.Module):
         Outputs:
             x: [B, 1, T] waveform
         """
+        embedding = self.encode(x)
+        logits = self.fc(embedding)
+        return logits
 
+    def encode(self, x):
         x = self.prep(x.squeeze(1))
 
         # ===== pre-filtering ========
@@ -94,5 +98,7 @@ class RawAudioCNN(nn.Module):
         x = self.conv7(x)
         x = self.conv8(x)
         x, _ = x.max(2)
-        x = self.fc(x)
         return x
+
+    def predict_from_embeddings(self, x):
+        return self.fc(x)

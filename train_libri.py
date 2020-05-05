@@ -10,7 +10,7 @@ from dev.models import RawAudioCNN
 from dev.transforms import Preprocessor
 
 # set global variables
-n_epochs = 50
+n_epochs = 50   # FIXME: `num_ites` is a better indicator
 epsilon = .0005
 
 
@@ -28,7 +28,7 @@ def main(args):
     logging.basicConfig(level=logging.INFO)
 
     generator_params = {
-        'batch_size': 256,
+        'batch_size': 64,
         'shuffle': True,
         'num_workers': 8
     }
