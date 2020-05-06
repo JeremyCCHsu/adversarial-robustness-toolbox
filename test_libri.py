@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 from art.classifiers import PyTorchClassifier
-from art.attacks import ProjectedGradientDescent, FastGradientMethod
+from art import attacks
 
 from dev.loaders import LibriSpeech4SpeakerRecognition, LibriSpeechSpeakers
 from dev.transforms import Preprocessor
@@ -20,17 +20,19 @@ NUM_CLASS = 251
 np.random.seed(123)
 epsilon = .0005
 Fs = 16000
-noise_level = 1 / 1000  # 30 dB
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 def main(args):
     resolver = LibriSpeechSpeakers("/data/speech")
+    attacker = getattr(attacks, args.attack)
 
     # load AudioMNIST test set
     dataset = LibriSpeech4SpeakerRecognition(
         root="/data/speech",
         subset="test",
+        train_speaker_ratio=1,      # NOTE: make sure it is consistent with training
+        train_utterance_ratio=0.9,  # NOTE: make sure it is consistent with training
         project_fs=Fs,  # FIXME: unused
         wav_length=None,
         url='train-clean-100'
@@ -50,7 +52,7 @@ def main(args):
         model=model,
         loss=torch.nn.CrossEntropyLoss(),
         optimizer=None,
-        input_shape=[1, hp.sr],
+        input_shape=[1, 5 * hp.sr],  # FIXME
         nb_classes=NUM_CLASS,
     )
 
@@ -60,16 +62,23 @@ def main(args):
 
     meta = open(args.output_dir / "meta.tsv", "w")
     meta.write("Index\tTrueGender\tPrediction\tPredictedGender\tSource\n")
+    
     vec = open(args.output_dir / "vec.tsv", "w")
-    # for i in range(n_iter):
+    
     for i, (waveform, label) in enumerate(loader, 1):
         label = label.item()
-        power = (waveform.pow(2).mean() * noise_level).sqrt().item()
-        pgd = ProjectedGradientDescent(classifier_art, eps=power, eps_step=power / 5)
+
+        if args.epsilon is not None:
+            eps = args.epsilon
+        else:
+            eps = (waveform.pow(2).mean() / np.power(10, args.snr / 10)).sqrt().item()
+
+        pgd = attacker(classifier_art, eps=eps, eps_step=eps / 5)  # TODO ad-hoc
 
         # craft adversarial example with PGD
         adv_waveform = pgd.generate(waveform)
-        noise = torch.from_numpy(adv_waveform) - waveform
+        adv_waveform = torch.from_numpy(adv_waveform)
+        noise = adv_waveform - waveform
         snr = 10 * (waveform.pow(2).mean() / noise.pow(2).mean()).log10()
 
 
@@ -86,7 +95,7 @@ def main(args):
             meta.write(
                 f"{stem}\t{pred:03d}\t{resolver.get_gender(pred)}\toriginal\n")
 
-            adv_emb = model.encode(torch.from_numpy(adv_waveform).to(device))
+            adv_emb = model.encode(adv_waveform.to(device))
             adv_logits = model.predict_from_embeddings(adv_emb)
             # _, pred_adv = torch.max(model(torch.from_numpy(adv_waveform).to(device)), 1)
             pred_adv = adv_logits.argmax(-1)
@@ -107,10 +116,6 @@ def main(args):
 
         sum_ += 1
 
-        # viz vec = adv-emb, meta = (adv filename, label, pred, adv-pred, gender, adv-gen)
-        
-        
-
         print((
             f"Processing {i}/{n_iter}: [L={label:3d}|P={pred:3d}|A={pred_adv:3d}], "
             f"SNR={snr:.2f} dB, Attack Success Rate={1 - correct/sum_:.4f}, acc={acc/sum_:.4f}"),
@@ -123,81 +128,60 @@ def main(args):
             write(
                 args.output_dir / f"adv-{i:04d}-true-{label:03d}--prediction-{pred_adv:03d}.wav",
                 Fs,
-                adv_waveform[0, 0]
+                adv_waveform[0, 0].detach().cpu().numpy()
             )
+
     print()
 
     meta.close()
     vec.close()
 
+
     # # =====================================================
-    # # load a test sample
-    # # waveform, label = dataset[success[-1]]
-    # # waveform, label = sample
+    prep = Preprocessor()
+    mel = prep(waveform[0])
+    nel = prep(noise[0])
+    ael = prep(adv_waveform[0])
 
-    # # waveform = sample['input']
-    # # label = sample['digit']
+    fig, ax = plt.subplots(3, 1)
+    ax[0].set_title(
+        f"Truth: {label}. Prediction: {pred}. Corrupted prediction: {pred_adv}\n"
+        "Top: clean. Middle: noise. Bottom: noisy"
+    )
+    im = ax[0].imshow(mel[0].detach().cpu().numpy(), origin="lower", aspect="auto")
+    fig.colorbar(im, ax=ax[0])
+    im = ax[1].imshow(nel[0].detach().cpu().numpy(), origin="lower", aspect="auto")
+    fig.colorbar(im, ax=ax[1])
+    im = ax[2].imshow(ael[0].detach().cpu().numpy(), origin="lower", aspect="auto")
+    fig.colorbar(im, ax=ax[2])
+    fig.savefig(args.output_dir / f"{stem}-mel.png")
 
-    # # craft adversarial example with PGD
-    # power = waveform.pow(2)
-    # power = (power.mean() / 1000).sqrt()
-    # pgd = FastGradientMethod(classifier_art, eps=power.item())
-    # adv_waveform = pgd.generate(
-    #     x=torch.unsqueeze(waveform, 0).numpy()
-    # )
+    fig, ax = plt.subplots(3, 1)
+    im = ax[0].plot(waveform[0, 0].detach().cpu().numpy())
+    im = ax[1].plot(noise[0, 0].detach().cpu().numpy())
+    im = ax[2].plot(adv_waveform[0, 0].detach().cpu().numpy())
+    fig.savefig(args.output_dir / f"{stem}-wav.png")
 
-    # # evaluate the classifier on the adversarial example
-    # with torch.no_grad():
-    #     _, pred = torch.max(model(torch.unsqueeze(waveform, 0)), 1)
-    #     _, pred_adv = torch.max(model(torch.from_numpy(adv_waveform)), 1)
-
-    # # print results
-    # print(f"Original prediction (ground truth):\t{pred.tolist()[0]} ({label})")
-    # print(f"Adversarial prediction:\t\t\t{pred_adv.tolist()[0]}")
-
-    # noise = adv_waveform[0] - waveform.numpy()
-    # noise = torch.from_numpy(noise)
-
-    # adv_waveform = torch.from_numpy(adv_waveform).squeeze(1)
-
-    # prep = Preprocessor()
-    # mel = prep(waveform)
-    # nel = prep(noise)
-    # ael = prep(adv_waveform)
-
-    # fig, ax = plt.subplots(3, 1)
-    # ax[0].set_title(
-    #     f"Truth: {label}. Prediction: {pred.tolist()[0]}. Corrupted prediction: {pred_adv.tolist()[0]}\n"
-    #     "Top: clean. Middle: noise. Bottom: noisy"
-    # )
-    # im = ax[0].imshow(mel[0].numpy(), origin="lower", aspect="auto")
-    # fig.colorbar(im, ax=ax[0])
-    # im = ax[1].imshow(nel[0].numpy(), origin="lower", aspect="auto")
-    # fig.colorbar(im, ax=ax[1])
-    # im = ax[2].imshow(ael[0].numpy(), origin="lower", aspect="auto")
-    # fig.colorbar(im, ax=ax[2])
-    # fig.savefig("model/test-mel.png")
-
-    # fig, ax = plt.subplots(3, 1)
-    # im = ax[0].plot(waveform[0])
-    # im = ax[1].plot(noise[0])
-    # im = ax[2].plot(adv_waveform[0])
-    # fig.savefig("model/test.png")
-
-    # write("model/ori.wav", hp.sr, waveform[0].numpy())
-    # write("model/noise.wav", hp.sr, noise[0].numpy())
-    # write("model/adv.wav", hp.sr, adv_waveform[0].numpy())
+    write(args.output_dir / f"{stem}-noise.wav", hp.sr, noise[0, 0].detach().cpu().numpy())
+    # write(args.output_dir / "ori.wav", hp.sr, waveform[0].numpy())
+    # write(args.output_dir / "adv.wav", hp.sr, adv_waveform[0].numpy())
     # # =====================================================
 
 
 def parse_args():
-    parser = ArgumentParser()
+    parser = ArgumentParser("Speaker Classification model on LibriSpeech dataset")
     parser.add_argument("-m", "--model_ckpt", required=True)
-    parser.add_argument("-o", "--output_dir", type=Path, default=None)
+    parser.add_argument("-o", "--output_dir", type=Path, default=None, required=True)
+    parser.add_argument("-a", "--attack", choices=dir(attacks), default="FastGradientMethod")
+    parser.add_argument("-e", "--epsilon", type=float, default=None)
+    parser.add_argument("-s", "--snr", type=float, default=None, help="signal-to-noise ratio (in decibel)")
     args = parser.parse_args()
+
+    assert not (args.epsilon is None and args.snr is None), "Set either `epsilon` or `snr`"
 
     if args.output_dir is not None:
         args.output_dir.mkdir(parents=True, exist_ok=True)
+
     return args
 
 

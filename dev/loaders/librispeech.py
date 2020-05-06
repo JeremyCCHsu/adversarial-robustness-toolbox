@@ -21,12 +21,15 @@ FOLDER_IN_ARCHIVE = "LibriSpeech"
 
 class LibriSpeech4SpeakerRecognition(LIBRISPEECH):
     def __init__(
-        self, root, project_fs, subset, wav_length=None, url=URL, folder_in_archive=FOLDER_IN_ARCHIVE, download=False,
+        self, root, project_fs, subset, wav_length=None, url=URL, 
+        folder_in_archive=FOLDER_IN_ARCHIVE, download=False,
         train_speaker_ratio=0.9, train_utterance_ratio=0.9,
     ):
         """
         subset: "train", "test", "outside"
         """
+        print("[WARNING] The dataset split is deterministic.")
+
         super().__init__(root, url=url, folder_in_archive=folder_in_archive, download=download)
         self._split(subset, train_speaker_ratio, train_utterance_ratio)
         self.project_fs = project_fs
@@ -35,7 +38,7 @@ class LibriSpeech4SpeakerRecognition(LIBRISPEECH):
     def _split(self, subset, train_speaker_ratio, train_utterance_ratio):
         def _parse(name_string):
             speaker_id, chapter_id, utterance_id = name_string.split("-")
-            return speaker_id, chapter_id, utterance_id 
+            return speaker_id, chapter_id, utterance_id
         
         utt_per_speaker = {}
         for filename in self._walker:
