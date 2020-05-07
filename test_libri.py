@@ -23,6 +23,18 @@ Fs = 16000
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
+def resolve_attacker_args(attacker_name, eps, eps_step):
+    if attacker_name == "DeepFool":
+        kwargs = {"epsilon": eps}
+    else:
+        kwargs = {"eps": eps, "eps_step": eps_step}
+    return kwargs
+
+
 def main(args):
     resolver = LibriSpeechSpeakers("/data/speech")
     attacker = getattr(attacks, args.attack)
@@ -47,6 +59,8 @@ def main(args):
     model.eval()
     model = model.to(device)
 
+
+
     # wrap model in a ART classifier
     classifier_art = PyTorchClassifier(
         model=model,
@@ -64,7 +78,8 @@ def main(args):
     meta.write("Index\tTrueGender\tPrediction\tPredictedGender\tSource\n")
     
     vec = open(args.output_dir / "vec.tsv", "w")
-    
+    snrs = []
+    epss = []
     for i, (waveform, label) in enumerate(loader, 1):
         label = label.item()
 
@@ -73,14 +88,16 @@ def main(args):
         else:
             eps = (waveform.pow(2).mean() / np.power(10, args.snr / 10)).sqrt().item()
 
-        pgd = attacker(classifier_art, eps=eps, eps_step=eps / 5)  # TODO ad-hoc
+        kwargs = resolve_attacker_args(args.attack, eps, eps_step=eps / 5)    # TODO ad-hoc
+        pgd = attacker(classifier_art, **kwargs)
 
         # craft adversarial example with PGD
         adv_waveform = pgd.generate(waveform)
         adv_waveform = torch.from_numpy(adv_waveform)
         noise = adv_waveform - waveform
         snr = 10 * (waveform.pow(2).mean() / noise.pow(2).mean()).log10()
-
+        snrs.append(snr)
+        epss.append(eps)
 
         # evaluate the classifier on the adversarial example
         with torch.no_grad():
@@ -165,6 +182,22 @@ def main(args):
     write(args.output_dir / f"{stem}-noise.wav", hp.sr, noise[0, 0].detach().cpu().numpy())
     # write(args.output_dir / "ori.wav", hp.sr, waveform[0].numpy())
     # write(args.output_dir / "adv.wav", hp.sr, adv_waveform[0].numpy())
+
+    if args.report is not None:
+        if not Path(args.report).exists():
+            header = (
+                f"Attacker={args.attack}\n"
+                f"Accuracy={acc/sum_: .4f}\n"
+                f"Model={args.model_ckpt} (#parameters={count_parameters(model)/1e6:.3f})\n"
+            )
+            header += "| avg eps | avg SNR   |  ASR    |\n"
+            header += "| ------  |   ---     |  ---    |\n"
+            with open(args.report, "a") as fp:
+                fp.write(header)
+
+        with open(args.report, "a") as fp:
+            row = f"| {np.mean(epss):.4e} |   {np.mean([s for s in snrs if s < 100]):.2f}   | {1 - correct/sum_: .4f} |\n"
+            fp.write(row)
     # # =====================================================
 
 
@@ -172,9 +205,12 @@ def parse_args():
     parser = ArgumentParser("Speaker Classification model on LibriSpeech dataset")
     parser.add_argument("-m", "--model_ckpt", required=True)
     parser.add_argument("-o", "--output_dir", type=Path, default=None, required=True)
-    parser.add_argument("-a", "--attack", choices=dir(attacks), default="FastGradientMethod")
+    parser.add_argument("-a", "--attack", choices=[x for x in dir(attacks) if x[0] != "_"], default="FastGradientMethod")
     parser.add_argument("-e", "--epsilon", type=float, default=None)
     parser.add_argument("-s", "--snr", type=float, default=None, help="signal-to-noise ratio (in decibel)")
+    parser.add_argument(
+        "-r", "--report", default=None,
+        help="a text file for documenting the final results.")
     args = parser.parse_args()
 
     assert not (args.epsilon is None and args.snr is None), "Set either `epsilon` or `snr`"
