@@ -30,6 +30,8 @@ def count_parameters(model):
 def resolve_attacker_args(attacker_name, eps, eps_step):
     if attacker_name == "DeepFool":
         kwargs = {"epsilon": eps}
+    elif attacker_name == "NoiseAttack":
+        kwargs = {"eps": eps}
     else:
         kwargs = {"eps": eps, "eps_step": eps_step}
     return kwargs
@@ -189,9 +191,9 @@ def main(args):
                 f"Attacker={args.attack}\n"
                 f"Accuracy={acc/sum_: .4f}\n"
                 f"Model={args.model_ckpt} (#parameters={count_parameters(model)/1e6:.3f})\n"
+                "| avg eps    | avg SNR   |  ASR    |\n"
+                "| ------     |   ---     |  ---    |\n"
             )
-            header += "| avg eps | avg SNR   |  ASR    |\n"
-            header += "| ------  |   ---     |  ---    |\n"
             with open(args.report, "a") as fp:
                 fp.write(header)
 
