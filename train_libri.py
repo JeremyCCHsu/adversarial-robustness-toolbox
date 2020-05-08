@@ -7,6 +7,8 @@ import torch
 from dev.loaders import LibriSpeech4SpeakerRecognition
 from dev.models import RawAudioCNN
 
+from hparams import hp
+
 
 # set global variables
 n_epochs = 50   # FIXME: `num_ites` is a better indicator
@@ -36,10 +38,10 @@ def main(args):
     train_data = LibriSpeech4SpeakerRecognition(
         root=args.data_root, 
         url=args.set,
-        train_speaker_ratio=1,
-        train_utterance_ratio=0.9,
+        train_speaker_ratio=hp.train_speaker_ratio,
+        train_utterance_ratio=hp.train_utterance_ratio,
         subset="train",
-        project_fs=16000,
+        project_fs=hp.sr,
         wav_length=args.wav_length,
     )
     train_generator = torch.utils.data.DataLoader(

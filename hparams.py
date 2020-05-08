@@ -20,8 +20,13 @@ class Hparams():
         self.preemphasis = 0.97
         self.n_iter = 100
         self.fmin = 0
-        self.fmax = 8000
+        self.fmax = self.sr // 2
         self.min_mel = 1e-5
         self.aux_context_window = 2
+
+        self.data_root = "/data/speech"
+        self.data_subset = "train-clean-100"
+        self.train_speaker_ratio = 1
+        self.train_utterance_ratio = 0.9
 
 hp = Hparams()
